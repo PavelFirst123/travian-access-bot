@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: travian-access-bot
+    env: python
+    buildCommand: ""
+    startCommand: python travian_bot.py
+    plan: free
+    autoDeploy: true
