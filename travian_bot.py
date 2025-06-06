@@ -127,5 +127,36 @@ async def fallback(message: types.Message):
     await message.reply("❗ Пожалуйста, выбери роль, используя кнопки ниже.")
 
 # Запуск
+@dp.message_handler(lambda message: message.text.lower().startswith("кто такой -"))
+async def who_is_nick(message: types.Message):
+    try:
+        nick_query = message.text.split('-', 1)[1].strip()
+
+        if not nick_query:
+            await message.reply("❗ Укажи игровой ник после тире. Пример: Кто такой - Prado")
+            return
+
+        # Авторизация в Google Sheets
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
+        client = gspread.authorize(creds)
+        sheet = client.open("Travian Logs").sheet1
+
+        nicks = sheet.col_values(6)  # Колонка с игровыми никами
+        if nick_query not in nicks:
+            await message.reply(f"❌ Игровой ник '{nick_query}' не найден.")
+            return
+
+        index = nicks.index(nick_query) + 1
+        username = sheet.cell(index, 3).value
+
+        if username:
+            await message.reply(f"🧾 Игрок с ником *{nick_query}* — @{username}", parse_mode="Markdown")
+        else:
+            await message.reply(f"🧾 Игрок с ником *{nick_query}* найден, но у него не указан username.", parse_mode="Markdown")
+
+    except Exception as e:
+        await message.reply(f"❗ Ошибка при поиске: {e}")
+
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
