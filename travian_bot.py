@@ -2,12 +2,12 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.utils import executor
 from datetime import datetime
-import csv
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 import os
 
-# Получаем токен из переменной окружения
+# Telegram token из переменной среды
 API_TOKEN = os.getenv("API_TOKEN")
-
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 
@@ -20,7 +20,7 @@ role_links = {
     "Только общий доступ": [("🔗 Общие ссылки (только для просмотра)", "https://t.me/addlist/4vn6JsYqmLtjZDJk")]
 }
 
-# Кнопки выбора роли
+# Кнопки ролей
 role_keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
 role_keyboard.add(
     KeyboardButton("Офф"),
@@ -30,6 +30,16 @@ role_keyboard.add(
     KeyboardButton("Только общий доступ")
 )
 
+# Подключение к Google Таблице
+def log_to_google(user_id, username, full_name, role):
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
+    client = gspread.authorize(creds)
+
+    sheet = client.open("Travian Logs").sheet1  # Название таблицы
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sheet.append_row([now, str(user_id), username or "", full_name, role])
+
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     await message.reply("👋 Привет! Выбери свою роль в альянсе:", reply_markup=role_keyboard)
@@ -38,23 +48,18 @@ async def start(message: types.Message):
 async def send_links(message: types.Message):
     role = message.text
     links = role_links[role]
-
-    # Отправка ссылок
     text = f"🔗 Ссылки для роли *{role}*:\n\n"
     for name, url in links:
         text += f"{name}: [перейти]({url})\n"
     await message.reply(text, parse_mode="Markdown")
 
-    # Логирование выбора в log.csv
-    with open("log.csv", mode="a", encoding="utf-8", newline="") as file:
-        writer = csv.writer(file)
-        writer.writerow([
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            message.from_user.id,
-            message.from_user.username or "",
-            message.from_user.full_name,
-            role
-        ])
+    # Логирование в Google Таблицу
+    log_to_google(
+        user_id=message.from_user.id,
+        username=message.from_user.username,
+        full_name=message.from_user.full_name,
+        role=role
+    )
 
 @dp.message_handler()
 async def fallback(message: types.Message):
