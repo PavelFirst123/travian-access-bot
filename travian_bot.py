@@ -7,15 +7,12 @@ from oauth2client.service_account import ServiceAccountCredentials
 import os
 
 API_TOKEN = os.getenv("API_TOKEN")
-ADMIN_ID = 6531829050  # ← Твой Telegram ID
+ADMIN_ID = 6531829050
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
-
-# Память: user_id → выбранная роль
 pending_roles = {}
 
-# Кнопки ролей
 role_links = {
     "Офф": [("📦 Набор ссылок для Офф", "https://t.me/addlist/6XIB_me1UYlhMDNk")],
     "Дефф": [("🛡 Набор ссылок для Дефф", "https://t.me/addlist/uv1ZpnRg1_JkYTg8")],
@@ -33,21 +30,21 @@ role_keyboard.add(
     KeyboardButton("Только общий доступ")
 )
 
-# Команда /start
+def get_sheet():
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
+    client = gspread.authorize(creds)
+    return client.open("Travian Logs").sheet1
+
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     await message.reply("👋 Привет! Выбери свою роль в альянсе:", reply_markup=role_keyboard)
 
-# Обработка выбора роли
 @dp.message_handler(lambda message: message.text in role_links)
 async def ask_nickname(message: types.Message):
     role = message.text
     user_id_str = str(message.from_user.id)
-
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
-    client = gspread.authorize(creds)
-    sheet = client.open("Travian Logs").sheet1
+    sheet = get_sheet()
     ids = sheet.col_values(2)
 
     if user_id_str in ids:
@@ -59,17 +56,17 @@ async def ask_nickname(message: types.Message):
     pending_roles[message.from_user.id] = role
     await message.reply("🧩 Введи, пожалуйста, свой **игровой никнейм**:")
 
-# Обработка никнейма
 @dp.message_handler(lambda message: message.from_user.id in pending_roles)
 async def receive_nickname(message: types.Message):
     user_id = message.from_user.id
     role = pending_roles[user_id]
     nickname = message.text.strip()
 
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
-    client = gspread.authorize(creds)
-    sheet = client.open("Travian Logs").sheet1
+    sheet = get_sheet()
+    used_nicks = [n.strip().lower() for n in sheet.col_values(6)]
+    if nickname.lower() in used_nicks:
+        await message.reply("⚠️ Этот игровой ник уже используется. Пожалуйста, выбери другой.")
+        return
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     sheet.append_row([
@@ -86,10 +83,8 @@ async def receive_nickname(message: types.Message):
     for name, url in links:
         text += f"{name}: [перейти]({url})\n"
     await message.reply(text, parse_mode="Markdown")
-
     del pending_roles[user_id]
 
-# Команда /reset — только для офицера
 @dp.message_handler(commands=['reset'])
 async def reset_user(message: types.Message):
     if message.from_user.id != ADMIN_ID:
@@ -101,11 +96,7 @@ async def reset_user(message: types.Message):
         await message.reply("✏️ Укажи username: /reset @username")
         return
 
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
-    client = gspread.authorize(creds)
-    sheet = client.open("Travian Logs").sheet1
-
+    sheet = get_sheet()
     usernames = sheet.col_values(3)
     if username_to_remove not in usernames:
         await message.reply(f"⚠️ Пользователь @{username_to_remove} не найден в таблице.")
@@ -115,21 +106,23 @@ async def reset_user(message: types.Message):
     sheet.delete_rows(index)
     await message.reply(f"✅ Пользователь @{username_to_remove} успешно сброшен.")
 
-# Поиск по игровому нику
-@dp.message_handler(lambda message: message.text.lower().startswith("кто такой -"))
+@dp.message_handler(lambda message: message.text.lower().startswith("кто такой -") or
+                                         message.text.lower().startswith("кто такой –") or
+                                         message.text.lower().startswith("кто такой"))
 async def who_is_nick(message: types.Message):
     try:
-        nick_query = message.text.split('-', 1)[1].strip()
+        parts = message.text.split('-', 1)
+        if len(parts) < 2:
+            parts = message.text.split('–', 1)
+        if len(parts) < 2:
+            parts = message.text.split(' ', 2)
+        nick_query = parts[1].strip()
 
         if not nick_query:
             await message.reply("❗ Укажи игровой ник после тире. Пример: Кто такой - Prado")
             return
 
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
-        client = gspread.authorize(creds)
-        sheet = client.open("Travian Logs").sheet1
-
+        sheet = get_sheet()
         nicks = sheet.col_values(6)
         if nick_query not in nicks:
             await message.reply(f"❌ Игровой ник '{nick_query}' не найден.")
@@ -137,16 +130,13 @@ async def who_is_nick(message: types.Message):
 
         index = nicks.index(nick_query) + 1
         username = sheet.cell(index, 3).value
-
         if username:
             await message.reply(f"🧾 Игрок с ником *{nick_query}* — @{username}", parse_mode="Markdown")
         else:
             await message.reply(f"🧾 Игрок с ником *{nick_query}* найден, но у него не указан username.", parse_mode="Markdown")
-
     except Exception as e:
         await message.reply(f"❗ Ошибка при поиске: {e}")
 
-# Последний обработчик (fallback)
 @dp.message_handler()
 async def fallback(message: types.Message):
     await message.reply("❗ Пожалуйста, выбери роль, используя кнопки ниже.")
